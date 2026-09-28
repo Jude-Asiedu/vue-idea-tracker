@@ -10,7 +10,6 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.117.2",
-    "@tailwindcss/oxide-darwin-x64": "^4.3.3",
     "@tailwindcss/typography": "^0.5.20",
     "@vueuse/core": "^15.0.0",
     "class-variance-authority": "^0.7.1",
