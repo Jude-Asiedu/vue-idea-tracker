@@ -94,6 +94,7 @@ export const useStagesStore = defineStore('stages', () => {
   }
 
   async function removeStage(id: string) {
+    if (id === 'backlog') return
     stages.value = stages.value
       .filter((s) => s.id !== id)
       .map((s, i) => ({ ...s, order: i }))

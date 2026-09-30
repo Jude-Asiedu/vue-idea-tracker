@@ -1,14 +1,13 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, computed } from 'vue'
 import draggable from 'vuedraggable'
 import {
   DialogRoot, DialogPortal, DialogOverlay, DialogContent,
   DialogTitle, DialogClose,
 } from 'reka-ui'
-import { X, GripVertical, Trash2, Plus, Check, Pencil } from 'lucide-vue-next'
+import { X, GripVertical, Trash2, Plus, Check, Pencil, AlertTriangle } from 'lucide-vue-next'
 import { useStagesStore } from '@/features/ideas/store/useStagesStore'
 import { useIdeaStore } from '@/features/ideas/store/useIdeaStore'
-import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import { STAGE_COLOR_PALETTE } from '@/features/ideas/types/stage.types'
 import type { Stage } from '@/features/ideas/types/stage.types'
 
@@ -59,9 +58,22 @@ const stageDeleteOpen    = ref(false)
 const pendingDeleteId    = ref('')
 const pendingDeleteLabel = ref('')
 const pendingDeleteCount = ref(0)
+const deleteAction       = ref<'move' | 'delete'>('move')
+const moveTargetStageId  = ref<string>('')
+
+const availableTargetStages = computed(() =>
+  stagesStore.orderedStages.filter((s) => s.id !== pendingDeleteId.value),
+)
+
+watch(stageDeleteOpen, (open) => {
+  if (open) {
+    deleteAction.value = 'move'
+    moveTargetStageId.value = availableTargetStages.value[0]?.id ?? ''
+  }
+})
 
 async function deleteStage(id: string, label: string) {
-  if (stagesStore.orderedStages.length <= 1) return
+  if (stagesStore.orderedStages.length <= 1 || id === 'backlog') return
   const count = ideaStore.ideas.filter((i) => i.status === id).length
   if (count > 0) {
     pendingDeleteId.value    = id
@@ -75,8 +87,14 @@ async function deleteStage(id: string, label: string) {
 }
 
 async function confirmDeleteStage() {
+  if (deleteAction.value === 'move' && moveTargetStageId.value) {
+    await ideaStore.bulkMoveStatus(pendingDeleteId.value, moveTargetStageId.value)
+  } else {
+    await ideaStore.bulkDeleteByStatus(pendingDeleteId.value)
+  }
   await stagesStore.removeStage(pendingDeleteId.value)
   localStages.value = [...stagesStore.orderedStages]
+  stageDeleteOpen.value = false
 }
 
 // ── Add new stage ──────────────────────────────────────────
@@ -185,9 +203,18 @@ async function addStage() {
                       @keydown.enter="saveRename(stage.id)"
                       @keydown.escape="cancelRename"
                     />
-                    <span v-else class="text-sm font-medium text-slate-800 dark:text-slate-200 truncate block">
-                      {{ stage.label }}
-                    </span>
+                    <div v-else class="flex items-center gap-1.5 min-w-0">
+                      <span class="text-sm font-medium text-slate-800 dark:text-slate-200 truncate">
+                        {{ stage.label }}
+                      </span>
+                      <span
+                        v-if="stage.id === 'backlog'"
+                        class="text-[10px] font-medium text-slate-400 dark:text-slate-500
+                               bg-slate-100 dark:bg-slate-800 rounded-full px-1.5 py-0.5 shrink-0"
+                      >
+                        Default
+                      </span>
+                    </div>
                   </div>
 
                   <!-- Actions -->
@@ -219,7 +246,7 @@ async function addStage() {
                         <Pencil :size="12" />
                       </button>
                       <button
-                        :disabled="stagesStore.orderedStages.length <= 1"
+                        :disabled="stagesStore.orderedStages.length <= 1 || stage.id === 'backlog'"
                         class="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400
                                hover:text-red-500 dark:hover:text-red-400
                                hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors
@@ -309,12 +336,93 @@ async function addStage() {
     </DialogPortal>
   </DialogRoot>
 
-  <ConfirmDialog
-    v-model:open="stageDeleteOpen"
-    :title="`Delete &quot;${pendingDeleteLabel}&quot;?`"
-    :message="`${pendingDeleteCount} idea${pendingDeleteCount === 1 ? '' : 's'} in this stage won\'t appear on the board until reassigned.`"
-    confirm-label="Delete stage"
-    :danger="true"
-    @confirm="confirmDeleteStage"
-  />
+  <!-- Stage delete dialog — move or trash orphaned ideas -->
+  <DialogRoot :open="stageDeleteOpen" @update:open="stageDeleteOpen = $event">
+    <DialogPortal>
+      <DialogOverlay class="fixed inset-0 z-60 bg-black/20 dark:bg-black/40 backdrop-blur-[2px]" />
+      <DialogContent
+        class="fixed z-60 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2
+               w-full max-w-sm rounded-2xl outline-none
+               bg-white dark:bg-slate-900
+               border border-slate-200 dark:border-slate-700
+               shadow-2xl shadow-black/10 dark:shadow-black/40
+               data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95
+               data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95"
+      >
+        <div class="p-6 space-y-4">
+          <!-- Title row -->
+          <div class="flex items-start gap-3">
+            <div class="w-9 h-9 rounded-xl bg-red-50 dark:bg-red-950/30 flex items-center justify-center shrink-0">
+              <AlertTriangle :size="16" class="text-red-500" />
+            </div>
+            <div>
+              <DialogTitle class="text-base font-semibold text-slate-900 dark:text-slate-100">
+                Delete "{{ pendingDeleteLabel }}"?
+              </DialogTitle>
+              <p class="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
+                {{ pendingDeleteCount }} idea{{ pendingDeleteCount === 1 ? '' : 's' }} {{ pendingDeleteCount === 1 ? 'is' : 'are' }} in this stage. What should happen to them?
+              </p>
+            </div>
+          </div>
+
+          <!-- Radio options -->
+          <div class="space-y-2">
+            <label
+              class="flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors"
+              :class="deleteAction === 'move'
+                ? 'border-teal-300 dark:border-teal-700 bg-teal-50/40 dark:bg-teal-950/20'
+                : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'"
+            >
+              <input type="radio" v-model="deleteAction" value="move" class="mt-0.5 accent-teal-600" />
+              <div class="flex-1 min-w-0">
+                <p class="text-sm font-medium text-slate-800 dark:text-slate-200">Move to another stage</p>
+                <select
+                  v-if="deleteAction === 'move'"
+                  v-model="moveTargetStageId"
+                  class="mt-2 w-full h-8 rounded-lg border border-slate-200 dark:border-slate-700
+                         bg-white dark:bg-slate-800 px-2 text-sm text-slate-900 dark:text-slate-100
+                         focus:outline-none focus:ring-2 focus:ring-teal-500"
+                >
+                  <option v-for="s in availableTargetStages" :key="s.id" :value="s.id">{{ s.label }}</option>
+                </select>
+              </div>
+            </label>
+
+            <label
+              class="flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors"
+              :class="deleteAction === 'delete'
+                ? 'border-red-300 dark:border-red-800 bg-red-50/40 dark:bg-red-950/20'
+                : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'"
+            >
+              <input type="radio" v-model="deleteAction" value="delete" class="accent-red-500" />
+              <div>
+                <p class="text-sm font-medium text-slate-800 dark:text-slate-200">Send to Trash</p>
+                <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Recoverable for 90 days</p>
+              </div>
+            </label>
+          </div>
+
+          <!-- Footer -->
+          <div class="flex items-center justify-end gap-2 pt-1">
+            <button
+              class="h-9 px-4 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-400
+                     hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors
+                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500"
+              @click="stageDeleteOpen = false"
+            >
+              Cancel
+            </button>
+            <button
+              class="h-9 px-4 rounded-xl text-sm font-medium text-white
+                     bg-red-500 hover:bg-red-600 transition-colors
+                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+              @click="confirmDeleteStage"
+            >
+              Delete stage
+            </button>
+          </div>
+        </div>
+      </DialogContent>
+    </DialogPortal>
+  </DialogRoot>
 </template>
