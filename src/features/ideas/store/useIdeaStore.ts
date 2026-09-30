@@ -124,11 +124,17 @@ export const useIdeaStore = defineStore('ideas', () => {
     if (!service) return
     const snapshot = [...trashedIdeas.value]
     const item = trashedIdeas.value.find((i) => i.id === id)
+    const stageExists = item
+      ? stagesStore.orderedStages.some((s) => s.id === item.status)
+      : true
     trashedIdeas.value = trashedIdeas.value.filter((i) => i.id !== id)
     if (item) ideas.value = [{ ...item, deleted_at: null }, ...ideas.value]
     try {
       const restored = await service.restore(id)
       ideas.value = ideas.value.map((i) => (i.id === id ? restored : i))
+      if (!stageExists) {
+        await updateIdea(id, { status: 'backlog' })
+      }
     } catch (e) {
       trashedIdeas.value = snapshot
       ideas.value = ideas.value.filter((i) => i.id !== id)
@@ -147,6 +153,20 @@ export const useIdeaStore = defineStore('ideas', () => {
     }
   }
 
+  async function bulkMoveStatus(fromStatus: string, toStatus: string) {
+    const toMove = ideas.value.filter((i) => i.status === fromStatus)
+    for (const idea of toMove) {
+      await updateIdea(idea.id, { status: toStatus })
+    }
+  }
+
+  async function bulkDeleteByStatus(status: string) {
+    const toDelete = ideas.value.filter((i) => i.status === status)
+    for (const idea of toDelete) {
+      await deleteIdea(idea.id)
+    }
+  }
+
   function selectIdea(id: string | null) { selectedIdeaId.value = id }
   function clearError() { error.value = null }
   function clearSuccess() { successMsg.value = null }
@@ -156,6 +176,7 @@ export const useIdeaStore = defineStore('ideas', () => {
     selectedIdeaId, selectedIdea, byStatus, allTags, kanbanColumns,
     fetchAll, fetchTrashed, createIdea, updateIdea,
     deleteIdea, restoreIdea, permanentlyDeleteIdea,
+    bulkMoveStatus, bulkDeleteByStatus,
     selectIdea, clearError, clearSuccess,
   }
 })

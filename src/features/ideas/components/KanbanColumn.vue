@@ -28,8 +28,9 @@ watch(
   (incoming) => { localIdeas.value = [...incoming] },
 )
 
-function onAdd(event: { element: Idea }) {
-  const idea = event.element
+function onChange(event: { added?: { element: Idea; newIndex: number } }) {
+  if (!event.added) return
+  const idea = event.added.element
   if (!idea) return
   void store.updateIdea(idea.id, { status: props.columnId })
   emit('announce', `Moved "${idea.title}" to ${props.label}`)
@@ -45,7 +46,7 @@ function openCard(idea: Idea) {
     class="flex flex-col w-72 shrink-0 rounded-2xl
            bg-slate-100/60 dark:bg-slate-900/60
            border border-slate-200 dark:border-slate-800"
-    :aria-label="`${label} column, ${ideas.length} idea${ideas.length === 1 ? '' : 's'}`"
+    :aria-label="`${label} column, ${localIdeas.length} idea${localIdeas.length === 1 ? '' : 's'}`"
   >
     <!-- Column header -->
     <div class="flex items-center gap-2 px-4 py-3">
@@ -56,9 +57,9 @@ function openCard(idea: Idea) {
       <span
         class="text-xs font-medium text-slate-500 dark:text-slate-500
                bg-slate-200 dark:bg-slate-800 rounded-full px-2 py-0.5"
-        :aria-label="`${ideas.length} ideas`"
+        :aria-label="`${localIdeas.length} ideas`"
       >
-        {{ ideas.length }}
+        {{ localIdeas.length }}
       </span>
     </div>
 
@@ -73,7 +74,7 @@ function openCard(idea: Idea) {
       drag-class="rotate-1"
       tag="div"
       class="flex flex-col gap-2 p-2 min-h-30 flex-1"
-      @add="onAdd"
+      @change="onChange"
     >
       <template #item="{ element }">
         <IdeaCard :idea="element" @click="openCard" />
