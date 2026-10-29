@@ -6,6 +6,7 @@ import router from '@/router'
 import { hasSupabaseConfig } from '@/lib/env'
 import { LocalIdeaService } from '@/features/ideas/services/LocalIdeaService'
 import { SupabaseIdeaService } from '@/features/ideas/services/SupabaseIdeaService'
+import { DynamicIdeaService } from '@/features/ideas/services/DynamicIdeaService'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/features/auth/store/useAuthStore'
 import { useStagesStore } from '@/features/ideas/store/useStagesStore'
@@ -21,10 +22,13 @@ useDarkMode().init()
   // Pinia first — useAuthStore() below requires it.
   app.use(pinia)
 
-  const ideaService =
-    hasSupabaseConfig && supabase
-      ? new SupabaseIdeaService(supabase)
-      : new LocalIdeaService()
+  // Needed before the router/service so we know auth state when deciding
+  // which service backs each request (see DynamicIdeaService below).
+  const authStore = useAuthStore()
+
+  const localService = new LocalIdeaService()
+  const cloudService = hasSupabaseConfig && supabase ? new SupabaseIdeaService(supabase) : null
+  const ideaService = new DynamicIdeaService(localService, cloudService, () => authStore.isAuthenticated)
 
   app.provide('ideaService', ideaService)
 
@@ -33,7 +37,6 @@ useDarkMode().init()
   // beforeEach guards. If the router is installed before auth is known the
   // guard sees loading=true, skips the redirect, and the user lands on a
   // protected route without being authenticated.
-  const authStore = useAuthStore()
   await authStore.initialize()
 
   // After auth is resolved, sync stages from user_metadata (auth) or localStorage (demo)

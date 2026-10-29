@@ -32,10 +32,13 @@ export const useAuthStore = defineStore('auth', () => {
     if (error) throw error
   }
 
-  async function signUpWithEmail(email: string, password: string) {
+  // Returns true when the account is immediately usable — i.e. the project
+  // has email confirmation disabled, so signUp() already returned a session.
+  async function signUpWithEmail(email: string, password: string): Promise<boolean> {
     if (!supabase) throw new Error('Supabase not configured')
-    const { error } = await supabase.auth.signUp({ email, password })
+    const { data, error } = await supabase.auth.signUp({ email, password })
     if (error) throw error
+    return data.session !== null
   }
 
   async function signInWithPhone(phone: string) {

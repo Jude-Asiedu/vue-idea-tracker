@@ -81,10 +81,14 @@ async function handleEmailSubmit() {
       await auth.signInWithEmail(email.value, password.value)
       await router.push('/board')
     } else {
-      await auth.signUpWithEmail(email.value, password.value)
-      successMsg.value = 'Account created! Check your email to confirm, then sign in.'
-      mode.value = 'signin'
-      password.value = ''
+      const signedIn = await auth.signUpWithEmail(email.value, password.value)
+      if (signedIn) {
+        await router.push('/board')
+      } else {
+        successMsg.value = 'Account created! Check your email to confirm, then sign in.'
+        mode.value = 'signin'
+        password.value = ''
+      }
     }
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : 'Authentication failed'

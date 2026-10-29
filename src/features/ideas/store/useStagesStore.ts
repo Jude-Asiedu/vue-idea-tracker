@@ -22,6 +22,7 @@ export const useStagesStore = defineStore('stages', () => {
   const authStore = useAuthStore()
 
   const stages = ref<Stage[]>([...DEFAULT_STAGES])
+  const syncError = ref<string | null>(null)
 
   function reload() {
     const fromMeta = authStore.user?.user_metadata?.['stages'] as Stage[] | undefined
@@ -68,18 +69,23 @@ export const useStagesStore = defineStore('stages', () => {
   async function _persist() {
     const data = stages.value
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
+    syncError.value = null
     if (supabase && authStore.isAuthenticated) {
       try {
         await supabase.auth.updateUser({ data: { stages: data } })
-      } catch {
-        // Non-critical — localStorage is the fallback
+      } catch (e) {
+        // localStorage still succeeded, but cross-device sync didn't —
+        // surface it so the user knows other devices won't see this change.
+        syncError.value = e instanceof Error
+          ? `Stage change saved locally but failed to sync: ${e.message}`
+          : 'Stage change saved locally but failed to sync to your account'
       }
     }
   }
 
   async function addStage(label: string, color: string) {
     const newStage: Stage = {
-      id: `stage_${Date.now()}`,
+      id: `stage_${crypto.randomUUID()}`,
       label: label.trim(),
       color,
       order: stages.value.length,
@@ -106,9 +112,11 @@ export const useStagesStore = defineStore('stages', () => {
     await _persist()
   }
 
+  function clearSyncError() { syncError.value = null }
+
   return {
-    stages, orderedStages, stageMap,
+    stages, orderedStages, stageMap, syncError,
     reload, colorConfig, stageDot, stageHeader, stageBadge, stageLabel,
-    addStage, updateStage, removeStage, reorderStages,
+    addStage, updateStage, removeStage, reorderStages, clearSyncError,
   }
 })

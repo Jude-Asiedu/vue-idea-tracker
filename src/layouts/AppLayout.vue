@@ -1,11 +1,15 @@
 <script setup lang="ts">
-import { computed, watch, ref } from 'vue'
+import { computed, watch, ref, inject } from 'vue'
 import { RouterView, RouterLink, useRoute } from 'vue-router'
 import { useIdeaStore } from '@/features/ideas/store/useIdeaStore'
 import { useAuthStore } from '@/features/auth/store/useAuthStore'
 import { useIdeaCreator } from '@/features/ideas/composables/useIdeaCreator'
 import { useStagesStore } from '@/features/ideas/store/useStagesStore'
 import { useDarkMode } from '@/composables/useDarkMode'
+import { useOnlineStatus } from '@/composables/useOnlineStatus'
+import type { IIdeaService } from '@/features/ideas/services/IdeaService'
+import { migrateGuestIdeas } from '@/features/ideas/services/migrateGuestIdeas'
+import { hasSupabaseConfig } from '@/lib/env'
 import Button from '@/components/ui/button.vue'
 import Input from '@/components/ui/input.vue'
 import Textarea from '@/components/ui/textarea.vue'
@@ -24,6 +28,8 @@ const authStore = useAuthStore()
 const stagesStore = useStagesStore()
 const { isDark, toggle: toggleDark } = useDarkMode()
 const { isOpen: creatorOpen, defaultStatus, openCreator, closeCreator } = useIdeaCreator()
+const { isOnline } = useOnlineStatus()
+const ideaService = inject<IIdeaService>('ideaService')
 
 const isDemo = computed(() => route.path.startsWith('/demo'))
 
@@ -63,6 +69,28 @@ watch(() => ideaStore.successMsg, (msg) => {
   showToast(msg, 'success', 3000)
   ideaStore.clearSuccess()
 })
+
+watch(() => stagesStore.syncError, (err) => {
+  if (!err) return
+  showToast(err, 'error', 4000)
+  stagesStore.clearSyncError()
+})
+
+// Runs on first mount (covers an already-authenticated reload) and again
+// whenever the user signs in during this session (covers sign-up → confirm
+// email → sign in, which all happens without a full page reload).
+watch(
+  () => authStore.isAuthenticated,
+  async (isAuth) => {
+    if (!isAuth || !hasSupabaseConfig || !ideaService) return
+    const count = await migrateGuestIdeas(ideaService)
+    if (count > 0) {
+      showToast(`Imported ${count} idea${count === 1 ? '' : 's'} from your guest session`, 'success', 4000)
+      await ideaStore.fetchAll()
+    }
+  },
+  { immediate: true },
+)
 
 // ---- User profile dialog ----
 const profileOpen = ref(false)
@@ -296,6 +324,18 @@ async function submitNewIdea() {
       id="main-content"
       tabindex="-1"
     >
+      <!-- Offline banner -->
+      <div
+        v-if="!isOnline"
+        class="mb-4 flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-sm font-medium
+               bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/50
+               text-amber-700 dark:text-amber-400"
+        role="status"
+      >
+        <AlertCircle :size="15" class="shrink-0" aria-hidden="true" />
+        You're offline — changes may not save until your connection is back.
+      </div>
+
       <RouterView />
     </main>
 

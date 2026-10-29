@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { shallowRef, computed, ref, inject } from 'vue'
 import type { Idea, CreateIdeaPayload, UpdateIdeaPayload } from '@/features/ideas/types/idea.types'
 import type { IIdeaService } from '@/features/ideas/services/IdeaService'
+import { ConflictError } from '@/features/ideas/services/errors'
 import { useStagesStore } from '@/features/ideas/store/useStagesStore'
 
 export const useIdeaStore = defineStore('ideas', () => {
@@ -88,16 +89,22 @@ export const useIdeaStore = defineStore('ideas', () => {
     if (!service) return
     const previous = ideas.value.find((i) => i.id === id)
     if (!previous) return
+    const expectedUpdatedAt = previous.updated_at
     ideas.value = ideas.value.map((i) =>
       i.id === id ? { ...i, ...payload, updated_at: new Date().toISOString() } : i,
     )
     try {
-      const updated = await service.update(id, payload)
+      const updated = await service.update(id, payload, expectedUpdatedAt)
       ideas.value = ideas.value.map((i) => (i.id === id ? updated : i))
       successMsg.value = 'Changes saved'
     } catch (e) {
       ideas.value = ideas.value.map((i) => (i.id === id ? previous : i))
-      error.value = e instanceof Error ? e.message : 'Update failed'
+      if (e instanceof ConflictError) {
+        error.value = 'This idea was changed elsewhere — refreshed with the latest version'
+        await fetchAll()
+      } else {
+        error.value = e instanceof Error ? e.message : 'Update failed'
+      }
     }
   }
 
@@ -154,16 +161,46 @@ export const useIdeaStore = defineStore('ideas', () => {
   }
 
   async function bulkMoveStatus(fromStatus: string, toStatus: string) {
+    if (!service) return
     const toMove = ideas.value.filter((i) => i.status === fromStatus)
-    for (const idea of toMove) {
-      await updateIdea(idea.id, { status: toStatus })
+    if (toMove.length === 0) return
+    const ids = toMove.map((i) => i.id)
+    const idSet = new Set(ids)
+    const snapshot = ideas.value
+    const now = new Date().toISOString()
+    ideas.value = ideas.value.map((i) =>
+      idSet.has(i.id) ? { ...i, status: toStatus, updated_at: now } : i,
+    )
+    try {
+      const updated = await service.bulkUpdateStatus(ids, toStatus)
+      const byId = new Map(updated.map((u) => [u.id, u]))
+      ideas.value = ideas.value.map((i) => byId.get(i.id) ?? i)
+    } catch (e) {
+      ideas.value = snapshot
+      error.value = e instanceof Error ? e.message : 'Bulk move failed'
     }
   }
 
   async function bulkDeleteByStatus(status: string) {
+    if (!service) return
     const toDelete = ideas.value.filter((i) => i.status === status)
-    for (const idea of toDelete) {
-      await deleteIdea(idea.id)
+    if (toDelete.length === 0) return
+    const ids = toDelete.map((i) => i.id)
+    const idSet = new Set(ids)
+    const ideasSnapshot = ideas.value
+    const trashSnapshot = trashedIdeas.value
+    const now = new Date().toISOString()
+    ideas.value = ideas.value.filter((i) => !idSet.has(i.id))
+    trashedIdeas.value = [
+      ...toDelete.map((i) => ({ ...i, deleted_at: now })),
+      ...trashedIdeas.value,
+    ]
+    try {
+      await service.bulkRemove(ids)
+    } catch (e) {
+      ideas.value = ideasSnapshot
+      trashedIdeas.value = trashSnapshot
+      error.value = e instanceof Error ? e.message : 'Bulk delete failed'
     }
   }
 

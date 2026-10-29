@@ -1,29 +1,29 @@
 import type { IIdeaService } from './IdeaService'
 import type { Idea, CreateIdeaPayload, UpdateIdeaPayload } from '@/features/ideas/types/idea.types'
 import { MOCK_IDEAS } from './mockData'
+import { ConflictError } from './errors'
+import { normalizeDeletedAt, withinRetention, sortByDeletedAtDesc } from './ideaServiceUtils'
 
-const STORAGE_KEY = 'ideadeck_demo_ideas'
+export const GUEST_STORAGE_KEY = 'ideadeck_demo_ideas'
 
 function load(): Idea[] {
-  const raw = localStorage.getItem(STORAGE_KEY)
+  const raw = localStorage.getItem(GUEST_STORAGE_KEY)
   if (raw) {
     try {
       return (JSON.parse(raw) as Idea[]).map((i) => ({
         ...i,
-        deleted_at: i.deleted_at ?? null,
+        deleted_at: normalizeDeletedAt(i.deleted_at),
       }))
     } catch { /* fall through to seed */ }
   }
   const seeded = structuredClone(MOCK_IDEAS)
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(seeded))
+  localStorage.setItem(GUEST_STORAGE_KEY, JSON.stringify(seeded))
   return seeded
 }
 
 function save(ideas: Idea[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(ideas))
+  localStorage.setItem(GUEST_STORAGE_KEY, JSON.stringify(ideas))
 }
-
-const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000
 
 export class LocalIdeaService implements IIdeaService {
   async fetchAll(): Promise<Idea[]> {
@@ -31,11 +31,11 @@ export class LocalIdeaService implements IIdeaService {
   }
 
   async fetchDeleted(): Promise<Idea[]> {
-    const cutoff = new Date(Date.now() - NINETY_DAYS_MS)
-    return load()
-      .filter((i) => i.deleted_at !== null)
-      .filter((i) => new Date(i.deleted_at as string) > cutoff)
-      .sort((a, b) => new Date(b.deleted_at as string).getTime() - new Date(a.deleted_at as string).getTime())
+    return sortByDeletedAtDesc(
+      load()
+        .filter((i) => i.deleted_at !== null)
+        .filter((i) => withinRetention(i.deleted_at as string)),
+    )
   }
 
   async create(payload: CreateIdeaPayload): Promise<Idea> {
@@ -52,11 +52,15 @@ export class LocalIdeaService implements IIdeaService {
     return idea
   }
 
-  async update(id: string, payload: UpdateIdeaPayload): Promise<Idea> {
+  async update(id: string, payload: UpdateIdeaPayload, expectedUpdatedAt?: string): Promise<Idea> {
     const all = load()
     const idx = all.findIndex((i) => i.id === id)
     if (idx === -1) throw new Error(`Idea ${id} not found`)
-    const updated: Idea = { ...(all[idx] as Idea), ...payload, updated_at: new Date().toISOString() }
+    const current = all[idx] as Idea
+    if (expectedUpdatedAt !== undefined && current.updated_at !== expectedUpdatedAt) {
+      throw new ConflictError(`Idea ${id} was changed elsewhere`)
+    }
+    const updated: Idea = { ...current, ...payload, updated_at: new Date().toISOString() }
     all[idx] = updated
     save(all)
     return updated
@@ -82,5 +86,25 @@ export class LocalIdeaService implements IIdeaService {
 
   async permanentlyDelete(id: string): Promise<void> {
     save(load().filter((i) => i.id !== id))
+  }
+
+  async bulkUpdateStatus(ids: string[], status: string): Promise<Idea[]> {
+    const idSet = new Set(ids)
+    const now = new Date().toISOString()
+    const updated: Idea[] = []
+    const next = load().map((i) => {
+      if (!idSet.has(i.id)) return i
+      const u = { ...i, status, updated_at: now }
+      updated.push(u)
+      return u
+    })
+    save(next)
+    return updated
+  }
+
+  async bulkRemove(ids: string[]): Promise<void> {
+    const idSet = new Set(ids)
+    const now = new Date().toISOString()
+    save(load().map((i) => (idSet.has(i.id) ? { ...i, deleted_at: now } : i)))
   }
 }
